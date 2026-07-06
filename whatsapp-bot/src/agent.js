@@ -3,7 +3,14 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const config = require('./config');
 
-const anthropic = new Anthropic();
+// מצב בדיקה: כשאין מפתח API, הסוכן מחזיר תגובה קבועה במקום לקרוא ל-LLM —
+// שימושי לבדיקת כל הצנרת (צימוד, סינונים, חיווי, שליחה) לפני חיבור המודל.
+const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
+const anthropic = hasApiKey ? new Anthropic() : null;
+
+if (!hasApiKey) {
+  console.warn('⚠️ ANTHROPIC_API_KEY לא מוגדר — הסוכן רץ במצב בדיקה ויחזיר תגובה קבועה.');
+}
 
 // היסטוריית שיחה לכל צ'אט (chatId -> מערך הודעות), כדי שהסוכן יזכור הקשר.
 const histories = new Map();
@@ -26,6 +33,11 @@ function trimHistory(history) {
  * מחזיר null אם הסוכן נכשל — ואז הבוט פשוט לא עונה (עדיף שקט מתגובה שגויה).
  */
 async function processWithAgent(text, chatId) {
+  // מצב בדיקה — תגובה קבועה, בלי LLM.
+  if (!hasApiKey) {
+    return config.testReply;
+  }
+
   const history = getHistory(chatId);
   history.push({ role: 'user', content: text });
   trimHistory(history);
