@@ -1,10 +1,21 @@
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const config = require('./config');
+const dashboard = require('./dashboard');
 const { processWithAgent } = require('./agent');
 
-// מצב הבוט בזמן ריצה — נשלט ע"י ה-Kill Switch.
-let botActive = config.startActive;
+// ===== מצב ריצה משותף (נצפה גם מהדשבורד) =====
+let botActive = config.startActive; // Kill Switch
+let connection = 'initializing'; // initializing | waiting_pairing | connected | disconnected
+const pairing = { code: null, qrDataUrl: null };
+const events = []; // יומן אירועים אחרונים (ring buffer)
+
+function logEvent(text) {
+  console.log(text);
+  events.push({ ts: Date.now(), text });
+  if (events.length > 200) events.shift();
+}
 
 // תמיכה בסביבות עם דפדפן מותקן מראש ו/או פרוקסי יוצא (למשל קונטיינר ענן):
 // PUPPETEER_EXECUTABLE_PATH — נתיב ל-Chromium קיים במקום הורדה.
@@ -22,29 +33,38 @@ const client = new Client({
   },
 });
 
-// צימוד: אם הוגדר מספר טלפון — מבקשים קוד צימוד (פעם אחת); אחרת מציגים QR.
+// ===== צימוד =====
+// אם הוגדר מספר טלפון — מבקשים קוד צימוד (פעם אחת); אחרת מציגים QR.
 let pairingCodeRequested = false;
 
 client.on('qr', async (qr) => {
+  connection = 'waiting_pairing';
   if (config.pairingPhoneNumber) {
     if (pairingCodeRequested) return;
     pairingCodeRequested = true;
     try {
       const code = await client.requestPairingCode(config.pairingPhoneNumber);
-      console.log(`🔗 קוד צימוד עבור ${config.pairingPhoneNumber}: ${code}`);
+      pairing.code = code;
+      logEvent(`🔗 קוד צימוד עבור ${config.pairingPhoneNumber}: ${code}`);
       console.log('   בטלפון: וואטסאפ ← הגדרות ← מכשירים מקושרים ← קישור מכשיר ← "קשר באמצעות מספר טלפון".');
     } catch (error) {
-      console.error('❌ בקשת קוד הצימוד נכשלה, נופל חזרה ל-QR:', error.message);
+      logEvent(`❌ בקשת קוד הצימוד נכשלה, נופל חזרה ל-QR: ${error.message}`);
+      pairing.qrDataUrl = await QRCode.toDataURL(qr).catch(() => null);
       qrcode.generate(qr, { small: true });
     }
     return;
   }
+  // QR מוצג גם בטרמינל וגם בדשבורד (מתחדש כל ~30 שניות)
+  pairing.qrDataUrl = await QRCode.toDataURL(qr).catch(() => null);
   console.log('סרוק את קוד ה-QR עם וואטסאפ בטלפון (הגדרות ← מכשירים מקושרים ← קישור מכשיר):');
   qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
-  console.log('✅ הבוט מחובר לוואטסאפ.');
+  connection = 'connected';
+  pairing.code = null;
+  pairing.qrDataUrl = null;
+  logEvent('✅ הבוט מחובר לוואטסאפ.');
   console.log(`   מצב נוכחי: ${botActive ? 'פעיל (עונה להודעות)' : 'האזנה בלבד (Read-Only)'}`);
   console.log(`   Kill Switch: שלח "${config.killSwitchOff}" מהטלפון שלך לכיבוי, "${config.killSwitchOn}" להדלקה.`);
   if (config.triggerKeyword) {
@@ -55,8 +75,15 @@ client.on('ready', () => {
   }
 });
 
-client.on('auth_failure', (msg) => console.error('❌ כשל אימות:', msg));
-client.on('disconnected', (reason) => console.error('⚠️ החיבור נותק:', reason));
+client.on('auth_failure', (msg) => {
+  connection = 'disconnected';
+  logEvent(`❌ כשל אימות: ${msg}`);
+});
+
+client.on('disconnected', (reason) => {
+  connection = 'disconnected';
+  logEvent(`⚠️ החיבור נותק: ${reason}`);
+});
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -80,16 +107,16 @@ client.on('message_create', async (msg) => {
       const command = msg.body.trim().toLowerCase();
       if (command === config.killSwitchOff) {
         botActive = false;
-        console.log('🛑 Kill Switch: הבוט כובה — חזרה למצב האזנה בלבד.');
+        logEvent('🛑 Kill Switch (מהטלפון): הבוט כובה — חזרה למצב האזנה בלבד.');
       } else if (command === config.killSwitchOn) {
         botActive = true;
-        console.log('🟢 Kill Switch: הבוט הודלק — מצב פעיל.');
+        logEvent('🟢 Kill Switch (מהטלפון): הבוט הודלק — מצב פעיל.');
       }
       // סינון קריטי: לעולם לא מגיבים להודעות שלך — מניעת לולאה אינסופית.
       return;
     }
 
-    console.log(`הודעה נכנסת מ-${msg.from}: ${msg.body}`);
+    logEvent(`📥 הודעה מ-${msg.from}: ${msg.body}`);
 
     // --- שרשרת סינונים: הסוכן עונה רק כשכל התנאים מתקיימים ---
 
@@ -134,10 +161,37 @@ client.on('message_create', async (msg) => {
     await client.sendMessage(msg.from, outgoing);
     await chat.clearState();
 
-    console.log(`↩️ נשלחה תגובה ל-${msg.from}: ${outgoing}`);
+    logEvent(`↩️ נשלחה תגובה ל-${msg.from}: ${outgoing}`);
   } catch (error) {
-    console.error('שגיאה בטיפול בהודעה:', error);
+    logEvent(`שגיאה בטיפול בהודעה: ${error.message}`);
   }
 });
 
-client.initialize();
+// ===== דשבורד ווב =====
+dashboard.start({
+  getState: () => ({
+    connection,
+    botActive,
+    pairing,
+    config: {
+      triggerKeyword: config.triggerKeyword,
+      allowedNumbers: config.allowedNumbers,
+      respondInGroups: config.respondInGroups,
+      model: config.model,
+    },
+    events,
+  }),
+  setActive: (active) => {
+    if (botActive === active) return;
+    botActive = active;
+    logEvent(active
+      ? '🟢 Kill Switch (מהדשבורד): הבוט הודלק — מצב פעיל.'
+      : '🛑 Kill Switch (מהדשבורד): הבוט כובה — חזרה למצב האזנה בלבד.');
+  },
+});
+
+client.initialize().catch((error) => {
+  connection = 'disconnected';
+  logEvent(`❌ ההתחברות לוואטסאפ נכשלה: ${error.message}`);
+  console.error('   הדשבורד נשאר זמין. בדוק חיבור לאינטרנט והפעל מחדש.');
+});

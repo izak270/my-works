@@ -63,4 +63,12 @@ module.exports = {
 
   // תיקיית שמירת הסשן של WhatsApp (כדי לא לסרוק QR בכל הפעלה)
   sessionDir: process.env.SESSION_DIR || './.wwebjs_auth',
+
+  // ===== דשבורד ווב =====
+  dashboardEnabled: parseBool(process.env.DASHBOARD_ENABLED, true),
+  dashboardPort: parseInt(process.env.DASHBOARD_PORT || '3000', 10),
+  // ברירת מחדל: מאזין רק מקומית. חשיפה לאינטרנט — דרך מנהרה (ראה README)
+  // או DASHBOARD_HOST=0.0.0.0, ואז חובה להגדיר DASHBOARD_PASSWORD.
+  dashboardHost: process.env.DASHBOARD_HOST || '127.0.0.1',
+  dashboardPassword: process.env.DASHBOARD_PASSWORD || '',
 };
