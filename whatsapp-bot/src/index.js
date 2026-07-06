@@ -14,8 +14,24 @@ const client = new Client({
   },
 });
 
-client.on('qr', (qr) => {
-  console.log('סרוק את קוד ה-QR עם וואטסאפ בטלפון:');
+// צימוד: אם הוגדר מספר טלפון — מבקשים קוד צימוד (פעם אחת); אחרת מציגים QR.
+let pairingCodeRequested = false;
+
+client.on('qr', async (qr) => {
+  if (config.pairingPhoneNumber) {
+    if (pairingCodeRequested) return;
+    pairingCodeRequested = true;
+    try {
+      const code = await client.requestPairingCode(config.pairingPhoneNumber);
+      console.log(`🔗 קוד צימוד עבור ${config.pairingPhoneNumber}: ${code}`);
+      console.log('   בטלפון: וואטסאפ ← הגדרות ← מכשירים מקושרים ← קישור מכשיר ← "קשר באמצעות מספר טלפון".');
+    } catch (error) {
+      console.error('❌ בקשת קוד הצימוד נכשלה, נופל חזרה ל-QR:', error.message);
+      qrcode.generate(qr, { small: true });
+    }
+    return;
+  }
+  console.log('סרוק את קוד ה-QR עם וואטסאפ בטלפון (הגדרות ← מכשירים מקושרים ← קישור מכשיר):');
   qrcode.generate(qr, { small: true });
 });
 
@@ -105,10 +121,12 @@ client.on('message_create', async (msg) => {
     await chat.sendStateTyping();
     await sleep(randomDelay());
 
-    await client.sendMessage(msg.from, agentReply);
+    // הקידומת (אם הוגדרה) מסמנת בשיחה שהתגובה נשלחה ע"י הסוכן ולא על ידך.
+    const outgoing = config.replyPrefix + agentReply;
+    await client.sendMessage(msg.from, outgoing);
     await chat.clearState();
 
-    console.log(`↩️ נשלחה תגובה ל-${msg.from}: ${agentReply}`);
+    console.log(`↩️ נשלחה תגובה ל-${msg.from}: ${outgoing}`);
   } catch (error) {
     console.error('שגיאה בטיפול בהודעה:', error);
   }

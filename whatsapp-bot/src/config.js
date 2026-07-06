@@ -38,6 +38,15 @@ module.exports = {
   // האם להגיב בקבוצות (@g.us). ברירת מחדל: לא.
   respondInGroups: parseBool(process.env.RESPOND_IN_GROUPS, false),
 
+  // צימוד לפי מספר טלפון (בפורמט בינלאומי ללא +, למשל 972501234567).
+  // אם מוגדר — במקום סריקת QR תקבל קוד צימוד להזנה בטלפון:
+  // וואטסאפ ← הגדרות ← מכשירים מקושרים ← קישור מכשיר ← "קשר באמצעות מספר טלפון".
+  pairingPhoneNumber: (process.env.PAIRING_PHONE_NUMBER || '').replace(/[^0-9]/g, ''),
+
+  // קידומת שתתווסף לכל תגובה של הסוכן (למשל "🤖 ") כדי שתוכל להבחין
+  // בשיחה בין תגובות הבוט לבין הודעות שכתבת בעצמך. ריק = ללא סימון.
+  replyPrefix: process.env.BOT_REPLY_PREFIX || '',
+
   // השהיה אנושית (מילישניות) לפני שליחת התגובה, נבחרת אקראית בטווח.
   minReplyDelayMs: parseInt(process.env.MIN_REPLY_DELAY_MS || '2000', 10),
   maxReplyDelayMs: parseInt(process.env.MAX_REPLY_DELAY_MS || '5000', 10),
