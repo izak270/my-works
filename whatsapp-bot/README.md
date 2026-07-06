@@ -94,11 +94,12 @@ npm start
 2. ממתין השהיה אקראית בטווח `MIN_REPLY_DELAY_MS`–`MAX_REPLY_DELAY_MS` (ברירת מחדל 2–5 שניות)
 3. שולח את התגובה ומכבה את החיווי (`chat.clearState()`)
 
-## הסוכן (Claude)
+## הסוכן (Gemini / Claude)
 
-- מודל ברירת מחדל: `claude-opus-4-8` עם חשיבה אדפטיבית
+- **שני ספקים נתמכים:** Gemini (Google) או Claude (Anthropic). הגדר `GEMINI_API_KEY` או `ANTHROPIC_API_KEY`. ברירת המחדל (`AGENT_PROVIDER=auto`) בוחרת Gemini אם קיים מפתח Gemini, אחרת Anthropic, אחרת מצב בדיקה.
+- מודלים: `GEMINI_MODEL` (ברירת מחדל `gemini-2.5-flash`) או `AGENT_MODEL` (ברירת מחדל `claude-opus-4-8`)
 - שומר היסטוריית שיחה נפרדת לכל צ'אט (עד `AGENT_HISTORY_TURNS` תורות) כדי לענות בהקשר
-- ה-system prompt ניתן להחלפה דרך `AGENT_SYSTEM_PROMPT`, וכולל כברירת מחדל הנחיה לא להתחייב בשם בעל החשבון
+- **מצב ביטוח** (`INSURANCE_ONLY=true`, ברירת מחדל): עונה ישירות רק על ביטוח, מעביר את השאר לאישור (ראה למטה). **מצב כללי** (`INSURANCE_ONLY=false`): עונה על כל הודעה ישירות — נוח לבדיקה מהירה.
 - אם הקריאה ל-API נכשלת או שהמודל לא החזיר טקסט — הבוט **שותק** במקום לשלוח תגובה שגויה
 
 ## הערה חשובה

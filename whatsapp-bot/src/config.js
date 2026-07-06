@@ -51,10 +51,27 @@ module.exports = {
   minReplyDelayMs: parseInt(process.env.MIN_REPLY_DELAY_MS || '2000', 10),
   maxReplyDelayMs: parseInt(process.env.MAX_REPLY_DELAY_MS || '5000', 10),
 
+  // ===== ספק ה-LLM =====
+  // auto (ברירת מחדל) = Gemini אם יש מפתח Gemini, אחרת Anthropic, אחרת מצב בדיקה.
+  // אפשר לכפות: AGENT_PROVIDER=gemini | anthropic
+  provider: (process.env.AGENT_PROVIDER || 'auto').toLowerCase(),
+
   // הגדרות הסוכן (LLM)
   model: process.env.AGENT_MODEL || 'claude-opus-4-8',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
   maxTokens: parseInt(process.env.AGENT_MAX_TOKENS || '1024', 10),
   historyTurns: parseInt(process.env.AGENT_HISTORY_TURNS || '20', 10),
+
+  // האם להגביל את הבוט לנושאי ביטוח בלבד (עם העברה לאישור על השאר).
+  // false = הבוט עונה על הודעות בסיסיות רגילות ישירות (שימושי לבדיקה מהירה).
+  insuranceOnly: parseBool(process.env.INSURANCE_ONLY, true),
+
+  // system prompt כללי (כשאין הגבלת ביטוח)
+  generalSystemPrompt:
+    process.env.AGENT_GENERAL_SYSTEM_PROMPT ||
+    'אתה עוזר אישי שעונה להודעות וואטסאפ בשם בעל החשבון. ' +
+    'ענה בקצרה, בנימוס ובאופן טבעי, בשפה של ההודעה הנכנסת. ' +
+    'אל תתחייב בשם בעל החשבון לפגישות, תשלומים או הבטחות.',
   systemPrompt:
     process.env.AGENT_SYSTEM_PROMPT ||
     'אתה עוזר וירטואלי של סוכן ביטוח, שעונה להודעות וואטסאפ בשם בעל החשבון. ' +
