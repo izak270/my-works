@@ -28,14 +28,48 @@ function trimHistory(history) {
   }
 }
 
+// הכלי שמאפשר למודל להעביר פנייה לאישור בעל החשבון במקום לענות בעצמו.
+const ESCALATE_TOOL = {
+  name: 'escalate_to_owner',
+  description:
+    'העבר את הפנייה לאישור בעל החשבון במקום לענות ישירות. חובה לקרוא לכלי הזה בכל אחד מהמקרים: ' +
+    '(1) ההודעה אינה עוסקת בביטוח; (2) אינך בטוח בתשובה; ' +
+    '(3) הפנייה דורשת התחייבות, מחיר סופי, פרט אישי, או החלטה בשם בעל החשבון.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      reason: {
+        type: 'string',
+        description: 'סיבה קצרה מדוע נדרש אישור (למשל: לא נושא ביטוח / חוסר ודאות / דורש התחייבות).',
+      },
+      suggested_reply: {
+        type: 'string',
+        description: 'הצעת תשובה שבעל החשבון יוכל לאשר או לערוך (אופציונלי).',
+      },
+    },
+    required: ['reason'],
+  },
+};
+
+// היוריסטיקה למצב בדיקה: האם ההודעה נראית קשורה לביטוח?
+function looksLikeInsurance(text) {
+  const lower = text.toLowerCase();
+  return config.insuranceKeywords.some((kw) => lower.includes(kw.toLowerCase()));
+}
+
 /**
- * מעביר את ההודעה לסוכן ומחזיר את תגובתו.
- * מחזיר null אם הסוכן נכשל — ואז הבוט פשוט לא עונה (עדיף שקט מתגובה שגויה).
+ * מעביר את ההודעה לסוכן ומחזיר החלטה:
+ *   { type: 'reply', text }                       — לענות ישירות (נושא ביטוח, בטוח)
+ *   { type: 'escalate', reason, suggestedReply }  — להעביר לאישור בעל החשבון
+ *   null                                          — כשל / אין תגובה (הבוט שותק)
  */
 async function processWithAgent(text, chatId) {
-  // מצב בדיקה — תגובה קבועה, בלי LLM.
+  // מצב בדיקה — בלי LLM: מזהים נושא ביטוח לפי מילות מפתח, אחרת מעבירים לאישור.
   if (!hasApiKey) {
-    return config.testReply;
+    if (looksLikeInsurance(text)) {
+      return { type: 'reply', text: config.testReply };
+    }
+    return { type: 'escalate', reason: 'מצב בדיקה: לא זוהה נושא ביטוח', suggestedReply: null };
   }
 
   const history = getHistory(chatId);
@@ -48,8 +82,22 @@ async function processWithAgent(text, chatId) {
       max_tokens: config.maxTokens,
       thinking: { type: 'adaptive' },
       system: config.systemPrompt,
+      tools: [ESCALATE_TOOL],
       messages: history,
     });
+
+    // אם המודל בחר להעביר לאישור — לא שומרים תשובה בהיסטוריה.
+    const toolUse = response.content.find(
+      (block) => block.type === 'tool_use' && block.name === 'escalate_to_owner'
+    );
+    if (toolUse) {
+      history.pop(); // לא מנציחים פנייה שלא נענתה
+      return {
+        type: 'escalate',
+        reason: (toolUse.input && toolUse.input.reason) || 'נדרש אישור בעל החשבון',
+        suggestedReply: (toolUse.input && toolUse.input.suggested_reply) || null,
+      };
+    }
 
     const reply = response.content
       .filter((block) => block.type === 'text')
@@ -58,16 +106,14 @@ async function processWithAgent(text, chatId) {
       .trim();
 
     if (!reply) {
-      // לא התקבל טקסט (למשל refusal) — לא שולחים כלום.
       history.pop();
       return null;
     }
 
     history.push({ role: 'assistant', content: reply });
     trimHistory(history);
-    return reply;
+    return { type: 'reply', text: reply };
   } catch (error) {
-    // מסירים את ההודעה שלא נענתה כדי שההיסטוריה תישאר עקבית.
     history.pop();
     console.error('[agent] שגיאה מול ה-LLM:', error.message);
     return null;

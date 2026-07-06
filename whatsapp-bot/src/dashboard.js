@@ -53,6 +53,12 @@ const PAGE = `<!DOCTYPE html>
   <div id="pairingBody" style="margin-top:10px"></div>
 </div>
 
+<div class="card" id="pendingCard" style="display:none">
+  <strong>⏳ ממתין לאישורך</strong>
+  <div id="pending" style="margin-top:8px"></div>
+  <p class="muted">אישור/דחייה נעשים מהוואטסאפ שלך (הבוט שולח לך את הפנייה עם הפקודות).</p>
+</div>
+
 <div class="card">
   <strong>יומן אירועים</strong>
   <div id="events" style="margin-top:8px"><span class="muted">אין אירועים עדיין.</span></div>
@@ -88,9 +94,23 @@ async function refresh() {
     let f = [];
     if (s.config.triggerKeyword) f.push('מילת מפתח: ' + s.config.triggerKeyword);
     if (s.config.allowedNumbers.length) f.push('מספרים מורשים: ' + s.config.allowedNumbers.join(', '));
+    if (s.config.ownerNumber) f.push('אישורים אל: ' + s.config.ownerNumber);
     f.push(s.config.respondInGroups ? 'קבוצות: כן' : 'קבוצות: לא');
     f.push('מודל: ' + s.config.model);
     document.getElementById('filters').textContent = f.join(' · ');
+
+    const pendCard = document.getElementById('pendingCard');
+    const pend = s.pending || [];
+    if (pend.length) {
+      pendCard.style.display = '';
+      document.getElementById('pending').innerHTML = pend.map((p) =>
+        '<div class="event"><strong>#' + p.id + '</strong> מ-' + esc(p.from) + ': ' + esc(p.question) +
+        (p.suggestedReply ? '<br><span class="muted">הצעה: ' + esc(p.suggestedReply) + '</span>' : '') +
+        '</div>'
+      ).join('');
+    } else {
+      pendCard.style.display = 'none';
+    }
 
     const pc = document.getElementById('pairingCard');
     const pb = document.getElementById('pairingBody');

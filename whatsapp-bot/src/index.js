@@ -11,6 +11,20 @@ let connection = 'initializing'; // initializing | waiting_pairing | connected |
 const pairing = { code: null, qrDataUrl: null };
 const events = []; // יומן אירועים אחרונים (ring buffer)
 
+// ===== אישורי בעל החשבון (Human-in-the-loop) =====
+// כל פנייה שאינה ביטוח / לא ודאית מועברת לאישור לפני שליחה.
+let approvalSeq = 0;
+const pendingApprovals = new Map(); // id -> { fromChat, question, suggestedReply }
+
+// המרת מספר בעל החשבון ל-Chat ID (0525283323 -> 972525283323@c.us)
+function toChatId(rawNumber) {
+  let digits = String(rawNumber || '').replace(/[^0-9]/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('0')) digits = '972' + digits.slice(1); // מספר ישראלי מקומי
+  return `${digits}@c.us`;
+}
+const ownerChatId = toChatId(config.ownerNumber);
+
 function logEvent(text) {
   console.log(text);
   events.push({ ts: Date.now(), text });
@@ -99,6 +113,84 @@ function numberFromChatId(chatId) {
   return chatId.split('@')[0];
 }
 
+// שליחת תגובה עם חיווי אנושי (Humanizing): "מקליד..." + השהיה אקראית + קידומת.
+async function sendReply(chatId, replyText) {
+  const outgoing = config.replyPrefix + replyText;
+  try {
+    const chat = await client.getChatById(chatId);
+    await chat.sendStateTyping();
+    await sleep(randomDelay());
+    await client.sendMessage(chatId, outgoing);
+    await chat.clearState();
+  } catch (error) {
+    // גיבוי: שליחה בלי חיווי אם משהו נכשל
+    await client.sendMessage(chatId, outgoing);
+  }
+  logEvent(`↩️ נשלחה תגובה ל-${numberFromChatId(chatId)}: ${outgoing}`);
+}
+
+// העברת פנייה לאישור בעל החשבון.
+async function escalateToOwner(fromChat, question, decision) {
+  if (!ownerChatId) {
+    logEvent(`⏸️ פנייה מ-${numberFromChatId(fromChat)} דרשה אישור אך OWNER_NUMBER לא הוגדר — לא נשלחה תשובה.`);
+    return;
+  }
+  const id = ++approvalSeq;
+  pendingApprovals.set(id, { fromChat, question, suggestedReply: decision.suggestedReply });
+
+  const fromNum = numberFromChatId(fromChat);
+  let body =
+    `🔔 פנייה שמחכה לאישורך (#${id})\n` +
+    `מאת: ${fromNum}\n` +
+    `ההודעה: ${question}\n` +
+    `סיבה: ${decision.reason}`;
+  if (decision.suggestedReply) {
+    body += `\n\nהצעת תשובה:\n${decision.suggestedReply}`;
+  }
+  body +=
+    `\n\nכדי לענות:\n` +
+    `• "אשר ${id}" — שלח את הצעת התשובה\n` +
+    `• "אשר ${id} <טקסט>" — שלח טקסט משלך\n` +
+    `• "דחה ${id}" — אל תענה`;
+
+  await client.sendMessage(ownerChatId, body);
+  logEvent(`🔔 פנייה מ-${fromNum} הועברה לאישורך (#${id}): ${question}`);
+}
+
+// טיפול בפקודת אישור מבעל החשבון. מחזיר true אם ההודעה טופלה כפקודה.
+async function handleOwnerCommand(body) {
+  const match = body.trim().match(/^(אשר|דחה)\s+(\d+)\s*([\s\S]*)$/);
+  if (!match) return false;
+
+  const [, action, idStr, rest] = match;
+  const id = parseInt(idStr, 10);
+  const pending = pendingApprovals.get(id);
+  if (!pending) {
+    await client.sendMessage(ownerChatId, `❓ אין פנייה ממתינה עם המזהה #${id}.`);
+    return true;
+  }
+
+  if (action === 'דחה') {
+    pendingApprovals.delete(id);
+    logEvent(`🚫 פנייה #${id} נדחתה על ידך — לא נשלחה תשובה ל-${numberFromChatId(pending.fromChat)}.`);
+    await client.sendMessage(ownerChatId, `בוצע: פנייה #${id} נדחתה, לא נשלחה תשובה.`);
+    return true;
+  }
+
+  // אישור: טקסט חופשי גובר על הצעת התשובה.
+  const replyText = rest.trim() || pending.suggestedReply;
+  if (!replyText) {
+    await client.sendMessage(ownerChatId, `לפנייה #${id} אין הצעת תשובה. כתוב: "אשר ${id} <הטקסט לשליחה>".`);
+    return true;
+  }
+
+  await sendReply(pending.fromChat, replyText);
+  pendingApprovals.delete(id);
+  logEvent(`✅ פנייה #${id} אושרה ונשלחה ל-${numberFromChatId(pending.fromChat)}.`);
+  await client.sendMessage(ownerChatId, `נשלח ✓ (פנייה #${id}).`);
+  return true;
+}
+
 // message_create נורה גם על הודעות שנשלחו ממך — נדרש בשביל ה-Kill Switch.
 client.on('message_create', async (msg) => {
   try {
@@ -117,6 +209,14 @@ client.on('message_create', async (msg) => {
     }
 
     logEvent(`📥 הודעה מ-${msg.from}: ${msg.body}`);
+
+    // --- אישורי בעל החשבון: הודעות מהמספר שלך מטופלות קודם ---
+    // (כך פקודות "אשר/דחה" עובדות גם אם הבוט כבוי או שיש allowlist).
+    if (ownerChatId && msg.from === ownerChatId) {
+      const handled = await handleOwnerCommand(msg.body);
+      if (handled) return;
+      // אם זו לא פקודת אישור — ממשיכים כרגיל (גם אתה יכול לדבר עם הבוט).
+    }
 
     // --- שרשרת סינונים: הסוכן עונה רק כשכל התנאים מתקיימים ---
 
@@ -146,22 +246,17 @@ client.on('message_create', async (msg) => {
     }
 
     // --- העברת ההודעה לסוכן ---
-    const agentReply = await processWithAgent(text, msg.from);
-    if (!agentReply) return;
+    const decision = await processWithAgent(text, msg.from);
+    if (!decision) return;
 
-    // --- שליחה עם חיווי אנושי (Humanizing) ---
-    // מטא חוסמת מספרים פרטיים עם התנהגות "בוטית" (מענה תוך מאית שנייה),
-    // לכן מדליקים חיווי "מקליד..." וממתינים השהיה אקראית לפני השליחה.
-    const chat = await msg.getChat();
-    await chat.sendStateTyping();
-    await sleep(randomDelay());
+    if (decision.type === 'escalate') {
+      // לא ביטוח / לא ודאי — מעבירים לאישורך במקום לענות.
+      await escalateToOwner(msg.from, text, decision);
+      return;
+    }
 
-    // הקידומת (אם הוגדרה) מסמנת בשיחה שהתגובה נשלחה ע"י הסוכן ולא על ידך.
-    const outgoing = config.replyPrefix + agentReply;
-    await client.sendMessage(msg.from, outgoing);
-    await chat.clearState();
-
-    logEvent(`↩️ נשלחה תגובה ל-${msg.from}: ${outgoing}`);
+    // נושא ביטוח וברור — עונים ישירות עם חיווי אנושי.
+    await sendReply(msg.from, decision.text);
   } catch (error) {
     logEvent(`שגיאה בטיפול בהודעה: ${error.message}`);
   }
@@ -178,7 +273,14 @@ dashboard.start({
       allowedNumbers: config.allowedNumbers,
       respondInGroups: config.respondInGroups,
       model: config.model,
+      ownerNumber: ownerChatId ? numberFromChatId(ownerChatId) : '',
     },
+    pending: Array.from(pendingApprovals.entries()).map(([id, p]) => ({
+      id,
+      from: numberFromChatId(p.fromChat),
+      question: p.question,
+      suggestedReply: p.suggestedReply,
+    })),
     events,
   }),
   setActive: (active) => {
