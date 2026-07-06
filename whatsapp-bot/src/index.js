@@ -6,11 +6,19 @@ const { processWithAgent } = require('./agent');
 // מצב הבוט בזמן ריצה — נשלט ע"י ה-Kill Switch.
 let botActive = config.startActive;
 
+// תמיכה בסביבות עם דפדפן מותקן מראש ו/או פרוקסי יוצא (למשל קונטיינר ענן):
+// PUPPETEER_EXECUTABLE_PATH — נתיב ל-Chromium קיים במקום הורדה.
+// HTTPS_PROXY — מועבר לדפדפן כ---proxy-server.
+const puppeteerArgs = ['--no-sandbox', '--disable-setuid-sandbox'];
+const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
+if (proxyUrl) puppeteerArgs.push(`--proxy-server=${proxyUrl}`);
+
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: config.sessionDir }),
   puppeteer: {
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    args: puppeteerArgs,
   },
 });
 
