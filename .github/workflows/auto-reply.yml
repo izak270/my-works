@@ -1,0 +1,50 @@
+name: Gmail auto-reply bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every 10 minutes (GitHub may delay scheduled runs by a few minutes).
+    # Note: the schedule only activates once this file is on the default branch.
+    - cron: '*/10 * * * *'
+
+permissions:
+  contents: read
+
+# Never let two polling runs overlap (they would double-process emails).
+concurrency:
+  group: gmail-auto-reply
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Persist pending approval requests between runs so the approver's
+      # reply can still be matched to the original customer email.
+      - uses: actions/cache@v4
+        with:
+          path: gmail-gemini-auto-reply/pending_approvals.json
+          key: pending-approvals-${{ github.run_id }}
+          restore-keys: |
+            pending-approvals-
+
+      - run: pip install -r gmail-gemini-auto-reply/requirements.txt
+
+      - name: Poll inbox once
+        run: python gmail-gemini-auto-reply/main.py
+        env:
+          GMAIL_ADDRESS: aio.tests.27@gmail.com
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          APPROVAL_EMAIL: izak270.id@gmail.com
+          RUN_ONCE: 'true'
+          # Safe mode: logs what it WOULD send without sending. Flipped to
+          # 'false' after the first successful verification run.
+          DRY_RUN: 'true'

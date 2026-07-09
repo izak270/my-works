@@ -53,6 +53,9 @@ POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "60"))
 PROMPT_FILE = os.environ.get("PROMPT_FILE", "prompt.txt")
 STATE_FILE = os.environ.get("STATE_FILE", "pending_approvals.json")
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() in ("1", "true", "yes")
+# Process the inbox once and exit instead of looping forever. Used when an
+# external scheduler (e.g. GitHub Actions cron) drives the polling.
+RUN_ONCE = os.environ.get("RUN_ONCE", "false").lower() in ("1", "true", "yes")
 
 IMAP_HOST = "imap.gmail.com"
 SMTP_HOST = "smtp.gmail.com"
@@ -540,8 +543,13 @@ def main() -> None:
     system_prompt = load_prompt()
     state = load_state()
     log.info("Starting Gmail auto-reply bot for %s (model=%s, threshold=%.2f, "
-             "dry_run=%s, pending approvals=%d)",
-             GMAIL_ADDRESS, GEMINI_MODEL, CONFIDENCE_THRESHOLD, DRY_RUN, len(state))
+             "dry_run=%s, run_once=%s, pending approvals=%d)",
+             GMAIL_ADDRESS, GEMINI_MODEL, CONFIDENCE_THRESHOLD, DRY_RUN,
+             RUN_ONCE, len(state))
+    if RUN_ONCE:
+        poll_once(system_prompt, state)
+        log.info("Single poll cycle finished; exiting (RUN_ONCE)")
+        return
     while True:
         try:
             poll_once(system_prompt, state)
